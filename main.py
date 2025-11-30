@@ -29,7 +29,7 @@ IPMIDI_PORTS = [1, 2, 3]
 def find_link_local_ip():
     """Auto-detect the link-local (169.254.x.x) interface for Nucleus connection."""
     try:
-        result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+        result = subprocess.run(['/sbin/ifconfig'], capture_output=True, text=True)
         # Find all 169.254.x.x addresses
         matches = re.findall(r'inet (169\.254\.\d+\.\d+)', result.stdout)
         if matches:
@@ -137,7 +137,7 @@ class NucleusBridge:
         # Feedback loop prevention: track recent messages
         self.recent_to_daw = {}      # msg_key -> timestamp
         self.recent_to_nucleus = {}  # msg_key -> timestamp
-        self.debounce_time = 0.05    # 50ms debounce window (shorter for responsiveness)
+        self.debounce_time = 0.010   # 10ms debounce window (allows LED feedback through)
 
     def msg_key(self, msg):
         """Create a hashable key for a message (includes value to avoid blocking different states)."""
@@ -384,10 +384,40 @@ class NucleusBridge:
         self.running = True
         threading.Thread(target=self.daw_receive_loop, daemon=True).start()
 
+        # Send MCU initialization to wake up the connection
+        self.send_mcu_init()
+
         print("\n" + "-" * 60)
         print("Bridge running! Ableton: Mackie Control -> Nucleus 2 Bridge")
         print("Press Ctrl+C to stop.")
         print("-" * 60 + "\n")
+
+    def send_mcu_init(self):
+        """Send MCU device query and initialization messages to wake up the connection."""
+        print("\nSending MCU initialization...")
+        time.sleep(0.5)  # Brief delay for ports to settle
+
+        # MCU Device Query (SysEx) - triggers Ableton to respond
+        # F0 00 00 66 14 00 F7 = Mackie Control device query
+        device_query = bytes([0xF0, 0x00, 0x00, 0x66, 0x14, 0x00, 0xF7])
+        for sender in self.senders:
+            sender.send(device_query)
+
+        # Send fader touch messages for channels 0-7 (touch then release)
+        # This simulates touching faders to trigger Ableton's initial sync
+        time.sleep(0.1)
+        for ch in range(8):
+            # Note 104-111 = fader touch for channels 1-8 in MCU
+            touch_on = Message('note_on', channel=0, note=104 + ch, velocity=127)
+            if self.midi_out:
+                self.midi_out.send(touch_on)
+        time.sleep(0.05)
+        for ch in range(8):
+            touch_off = Message('note_off', channel=0, note=104 + ch, velocity=0)
+            if self.midi_out:
+                self.midi_out.send(touch_off)
+
+        print("  MCU init sent ✓")
 
         try:
             while self.running:

@@ -1,6 +1,10 @@
 # Claude Code
 .claude/
 
+# Logs
+*.log
+bridge.log
+
 # Python
 __pycache__/
 *.py[cod]
